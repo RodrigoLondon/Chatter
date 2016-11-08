@@ -7,15 +7,78 @@
 //
 
 import UIKit
+import CoreData
+import Firebase
+
+
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
 
     var window: UIWindow?
+    
+    private var contactImporter:ContactImporter?
+    private var contactsSyncer:Syncer?
+    private var contactsUploadSyncer:Syncer?
+    private var firebaseSyncer:Syncer?
+    private var firebaseStore:FirebaseStore?
+    
 
-
+    
     func application(application: UIApplication, didFinishLaunchingWithOptions launchOptions: [NSObject: AnyObject]?) -> Bool {
         // Override point for customization after application launch.
+        
+        //FIRApp.configure()
+        
+        let mainContext = NSManagedObjectContext(concurrencyType: .MainQueueConcurrencyType)
+        mainContext.persistentStoreCoordinator = CDHelper.sharedInstance.coordinator
+
+        let contactsContext = NSManagedObjectContext(concurrencyType: .PrivateQueueConcurrencyType)
+        contactsContext.persistentStoreCoordinator = CDHelper.sharedInstance.coordinator
+        let firebaseContext = NSManagedObjectContext(concurrencyType: .PrivateQueueConcurrencyType)
+        firebaseContext.persistentStoreCoordinator = CDHelper.sharedInstance.coordinator
+          contactsSyncer = Syncer(mainContext: mainContext, backgroundContext: contactsContext)
+        let firebaseStore = FirebaseStore(context: firebaseContext)
+        self.firebaseStore = firebaseStore
+        contactsUploadSyncer = Syncer(mainContext: contactsContext, backgroundContext: firebaseContext)
+        contactsUploadSyncer?.remoteStore = firebaseStore
+        firebaseSyncer = Syncer(mainContext: mainContext, backgroundContext: firebaseContext)
+        firebaseSyncer?.remoteStore = firebaseStore
+        contactImporter = ContactImporter(context:contactsContext)
+//        importContacts(contactsContext)
+        let tabController = UITabBarController()
+        
+        let vcData:[(UIViewController, UIImage, String)] = [ (FavoritesViewController(),UIImage(named: "favorites_icon")!, "Favorites"),(ContactsViewController(),UIImage(named: "contact_icon")!, "Contacts"), (AllChatsViewController(),UIImage(named: "chat_icon")!, "Chats"), (LocationViewController(),UIImage(named: "location_icon")!, "Location")]
+        let vcs = vcData.map{
+            (vc:UIViewController, image:UIImage, title:String)->UINavigationController in
+            if var vc = vc as? ContextViewController{
+                vc.context = mainContext
+            }
+            let nav = UINavigationController(rootViewController: vc)
+            nav.tabBarItem.image = image
+            nav.title = title
+            return nav
+        }
+
+        tabController.viewControllers = vcs
+        
+        if firebaseStore.hasAuth(){
+            firebaseStore.startSyncing()
+            contactImporter?.listenForChanges()
+//            let tabController = UITabBarController()
+
+            window?.rootViewController = tabController
+            
+        }else{
+
+//        window?.rootViewController =  SignUpViewController() //tabController
+            let vc = SignUpViewController()
+            vc.remoteStore = firebaseStore
+            vc.rootViewController = tabController
+            vc.contactImporter = contactImporter
+            window?.rootViewController = vc
+
+        }
         return true
     }
 
@@ -40,7 +103,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     func applicationWillTerminate(application: UIApplication) {
         // Called when the application is about to terminate. Save data if appropriate. See also applicationDidEnterBackground:.
     }
+    func importContacts(context:NSManagedObjectContext){
+        let dataSeeded = NSUserDefaults.standardUserDefaults().boolForKey("dataSeeded")
+        guard !dataSeeded else {return}
+    
+        
+        contactImporter?.fetch()
 
+        NSUserDefaults.standardUserDefaults().setObject(true, forKey: "dataSeeded")
 
+    }
 }
+
 
